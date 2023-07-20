@@ -33,9 +33,11 @@ import (
 	"github.com/tomochain/tomochain/common"
 	"github.com/tomochain/tomochain/common/hexutil"
 	"github.com/tomochain/tomochain/common/math"
+	"github.com/tomochain/tomochain/consensus"
 	"github.com/tomochain/tomochain/consensus/ethash"
 	"github.com/tomochain/tomochain/core"
 	"github.com/tomochain/tomochain/core/bloombits"
+	"github.com/tomochain/tomochain/core/rawdb"
 	"github.com/tomochain/tomochain/core/state"
 	"github.com/tomochain/tomochain/core/types"
 	"github.com/tomochain/tomochain/core/vm"
@@ -177,7 +179,7 @@ func (b *SimulatedBackend) ForEachStorageAt(ctx context.Context, contract common
 
 // TransactionReceipt returns the receipt of a transaction.
 func (b *SimulatedBackend) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
-	receipt, _, _, _ := core.GetReceipt(b.database, txHash)
+	receipt, _, _, _ := rawdb.GetReceipt(b.database, txHash)
 	return receipt, nil
 }
 
@@ -243,7 +245,7 @@ func (b *SimulatedBackend) CallContract(ctx context.Context, call tomochain.Call
         return res.Return(), res.Err
 }
 
-//FIXME: please use copyState for this function
+// FIXME: please use copyState for this function
 // CallContractWithState executes a contract call at the given state.
 func (b *SimulatedBackend) CallContractWithState(call tomochain.CallMsg, chain consensus.ChainContext, statedb *state.StateDB) ([]byte, error) {
 	// Ensure message is initialized properly.
@@ -332,7 +334,8 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call tomochain.CallM
 		call.Gas = gas
 
 		snapshot := b.pendingState.Snapshot()
-		res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+		_, _, failed, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+		fmt.Println("EstimateGas", err, failed)
 		b.pendingState.RevertToSnapshot(snapshot)
 
 		if err != nil {
@@ -555,11 +558,11 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, block rpc.BlockNumb
 }
 
 func (fb *filterBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	return core.GetBlockReceipts(fb.db, hash, core.GetBlockNumber(fb.db, hash)), nil
+	return rawdb.GetBlockReceipts(fb.db, hash, rawdb.GetBlockNumber(fb.db, hash)), nil
 }
 
 func (fb *filterBackend) GetLogs(ctx context.Context, hash common.Hash) ([][]*types.Log, error) {
-	receipts := core.GetBlockReceipts(fb.db, hash, core.GetBlockNumber(fb.db, hash))
+	receipts := rawdb.GetBlockReceipts(fb.db, hash, rawdb.GetBlockNumber(fb.db, hash))
 	if receipts == nil {
 		return nil, nil
 	}

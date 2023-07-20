@@ -21,13 +21,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 	"math/big"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/tomochain/tomochain/tomox/tradingstate"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/util"
@@ -42,6 +39,7 @@ import (
 	"github.com/tomochain/tomochain/consensus/posv"
 	contractValidator "github.com/tomochain/tomochain/contracts/validator/contract"
 	"github.com/tomochain/tomochain/core"
+	"github.com/tomochain/tomochain/core/rawdb"
 	"github.com/tomochain/tomochain/core/state"
 	"github.com/tomochain/tomochain/core/types"
 	"github.com/tomochain/tomochain/core/vm"
@@ -51,6 +49,8 @@ import (
 	"github.com/tomochain/tomochain/params"
 	"github.com/tomochain/tomochain/rlp"
 	"github.com/tomochain/tomochain/rpc"
+	"github.com/tomochain/tomochain/tomox/tradingstate"
+	"github.com/tomochain/tomochain/tomoxlending/lendingstate"
 )
 
 const (
@@ -425,7 +425,8 @@ func (s *PrivateAccountAPI) SignTransaction(ctx context.Context, args SendTxArgs
 // safely used to calculate a signature from.
 //
 // The hash is calulcated as
-//   keccak256("\x19Ethereum Signed Message:\n"${message length}${message}).
+//
+//	keccak256("\x19Ethereum Signed Message:\n"${message length}${message}).
 //
 // This gives context to the signed message and prevents signing of transactions.
 func signHash(data []byte) []byte {
@@ -1423,8 +1424,8 @@ func (s *PublicBlockChainAPI) findNearestSignedBlock(ctx context.Context, b *typ
 }
 
 /*
-	findFinalityOfBlock return finality of a block
-	Use blocksHashCache for to keep track - refer core/blockchain.go for more detail
+findFinalityOfBlock return finality of a block
+Use blocksHashCache for to keep track - refer core/blockchain.go for more detail
 */
 func (s *PublicBlockChainAPI) findFinalityOfBlock(ctx context.Context, b *types.Block, masternodes []common.Address) (uint, error) {
 	engine, _ := s.b.GetEngine().(*posv.Posv)
@@ -1489,7 +1490,7 @@ func (s *PublicBlockChainAPI) findFinalityOfBlock(ctx context.Context, b *types.
 }
 
 /*
-	Extract signers from block
+Extract signers from block
 */
 func (s *PublicBlockChainAPI) getSigners(ctx context.Context, block *types.Block, engine *posv.Posv) ([]common.Address, error) {
 	var err error
@@ -1712,7 +1713,7 @@ func (s *PublicTransactionPoolAPI) GetTransactionCount(ctx context.Context, addr
 // GetTransactionByHash returns the transaction for the given hash
 func (s *PublicTransactionPoolAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) *RPCTransaction {
 	// Try to return an already finalized transaction
-	if tx, blockHash, blockNumber, index := core.GetTransaction(s.b.ChainDb(), hash); tx != nil {
+	if tx, blockHash, blockNumber, index := rawdb.GetTransaction(s.b.ChainDb(), hash); tx != nil {
 		return newRPCTransaction(tx, blockHash, blockNumber, index)
 	}
 	// No finalized transaction, try to retrieve it from the pool
@@ -1728,7 +1729,7 @@ func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, 
 	var tx *types.Transaction
 
 	// Retrieve a finalized transaction, or a pooled otherwise
-	if tx, _, _, _ = core.GetTransaction(s.b.ChainDb(), hash); tx == nil {
+	if tx, _, _, _ = rawdb.GetTransaction(s.b.ChainDb(), hash); tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			// Transaction not found anywhere, abort
 			return nil, nil
@@ -1740,7 +1741,7 @@ func (s *PublicTransactionPoolAPI) GetRawTransactionByHash(ctx context.Context, 
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, blockNumber, index := core.GetTransaction(s.b.ChainDb(), hash)
+	tx, blockHash, blockNumber, index := rawdb.GetTransaction(s.b.ChainDb(), hash)
 	if tx == nil {
 		return nil, nil
 	}
@@ -1985,7 +1986,7 @@ func (s *PublicTomoXTransactionPoolAPI) SendLendingRawTransaction(ctx context.Co
 func (s *PublicTomoXTransactionPoolAPI) GetOrderTxMatchByHash(ctx context.Context, hash common.Hash) ([]*tradingstate.OrderItem, error) {
 	var tx *types.Transaction
 	orders := []*tradingstate.OrderItem{}
-	if tx, _, _, _ = core.GetTransaction(s.b.ChainDb(), hash); tx == nil {
+	if tx, _, _, _ = rawdb.GetTransaction(s.b.ChainDb(), hash); tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			return []*tradingstate.OrderItem{}, nil
 		}
@@ -2716,7 +2717,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetBorrows(ctx context.Context, lendingT
 // GetLendingTxMatchByHash returns lendingItems which have been processed at tx of the given txhash
 func (s *PublicTomoXTransactionPoolAPI) GetLendingTxMatchByHash(ctx context.Context, hash common.Hash) ([]*lendingstate.LendingItem, error) {
 	var tx *types.Transaction
-	if tx, _, _, _ = core.GetTransaction(s.b.ChainDb(), hash); tx == nil {
+	if tx, _, _, _ = rawdb.GetTransaction(s.b.ChainDb(), hash); tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			return []*lendingstate.LendingItem{}, nil
 		}
@@ -2732,7 +2733,7 @@ func (s *PublicTomoXTransactionPoolAPI) GetLendingTxMatchByHash(ctx context.Cont
 // GetLiquidatedTradesByTxHash returns trades which closed by TomoX protocol at the tx of the give hash
 func (s *PublicTomoXTransactionPoolAPI) GetLiquidatedTradesByTxHash(ctx context.Context, hash common.Hash) (lendingstate.FinalizedResult, error) {
 	var tx *types.Transaction
-	if tx, _, _, _ = core.GetTransaction(s.b.ChainDb(), hash); tx == nil {
+	if tx, _, _, _ = rawdb.GetTransaction(s.b.ChainDb(), hash); tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			return lendingstate.FinalizedResult{}, nil
 		}
@@ -3083,7 +3084,8 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 // GetStakerROI Estimate ROI for stakers using the last epoc reward
 // then multiple by epoch per year, if the address is not masternode of last epoch - return 0
 // Formular:
-// 		ROI = average_latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
+//
+//	ROI = average_latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
 func (s *PublicBlockChainAPI) GetStakerROI() float64 {
 	blockNumber := s.b.CurrentBlock().Number().Uint64()
 	lastCheckpointNumber := blockNumber - (blockNumber % s.b.ChainConfig().Posv.Epoch) - s.b.ChainConfig().Posv.Epoch // calculate for 2 epochs ago
@@ -3109,7 +3111,8 @@ func (s *PublicBlockChainAPI) GetStakerROI() float64 {
 // GetStakerROIMasternode Estimate ROI for stakers of a specific masternode using the last epoc reward
 // then multiple by epoch per year, if the address is not masternode of last epoch - return 0
 // Formular:
-// 		ROI = latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
+//
+//	ROI = latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
 func (s *PublicBlockChainAPI) GetStakerROIMasternode(masternode common.Address) float64 {
 	votersReward := s.b.GetVotersRewards(masternode)
 	if votersReward == nil {
