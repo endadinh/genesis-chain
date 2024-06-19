@@ -24,9 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tomochain/tomochain/consensus"
-	"github.com/tomochain/tomochain/core/rawdb"
-
 	"github.com/tomochain/tomochain"
 	"github.com/tomochain/tomochain/accounts/abi"
 	"github.com/tomochain/tomochain/accounts/abi/bind"
@@ -52,7 +49,6 @@ import (
 var _ bind.ContractBackend = (*SimulatedBackend)(nil)
 
 var errBlockNumberUnsupported = errors.New("SimulatedBackend cannot access blocks other than the latest block")
-var errGasEstimationFailed = errors.New("gas required exceeds allowance or always failing transaction")
 
 // SimulatedBackend implements bind.ContractBackend, simulating a blockchain in
 // the background. Its main purpose is to allow easily testing contract bindings.
@@ -192,34 +188,34 @@ func (b *SimulatedBackend) PendingCodeAt(ctx context.Context, contract common.Ad
 }
 
 func newRevertError(result *core.ExecutionResult) *revertError {
- 	reason, errUnpack := abi.UnpackRevert(result.Revert())
- 	err := errors.New("execution reverted")
- 	if errUnpack == nil {
- 		err = fmt.Errorf("execution reverted: %v", reason)
- 	}
- 	return &revertError{
- 		error:  err,
- 		reason: hexutil.Encode(result.Revert()),
- 	}
- }
+	reason, errUnpack := abi.UnpackRevert(result.Revert())
+	err := errors.New("execution reverted")
+	if errUnpack == nil {
+		err = fmt.Errorf("execution reverted: %v", reason)
+	}
+	return &revertError{
+		error:  err,
+		reason: hexutil.Encode(result.Revert()),
+	}
+}
 
- // revertError is an API error that encompassas an EVM revertal with JSON error
- // code and a binary data blob.
- type revertError struct {
- 	error
- 	reason string // revert reason hex encoded
- }
+// revertError is an API error that encompassas an EVM revertal with JSON error
+// code and a binary data blob.
+type revertError struct {
+	error
+	reason string // revert reason hex encoded
+}
 
- // ErrorCode returns the JSON error code for a revertal.
- // See: https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal
- func (e *revertError) ErrorCode() int {
- 	return 3
- }
+// ErrorCode returns the JSON error code for a revertal.
+// See: https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal
+func (e *revertError) ErrorCode() int {
+	return 3
+}
 
- // ErrorData returns the hex encoded revert reason.
- func (e *revertError) ErrorData() interface{} {
- 	return e.reason
- }
+// ErrorData returns the hex encoded revert reason.
+func (e *revertError) ErrorData() interface{} {
+	return e.reason
+}
 
 // CallContract executes a contract call.
 func (b *SimulatedBackend) CallContract(ctx context.Context, call tomochain.CallMsg, blockNumber *big.Int) ([]byte, error) {
@@ -234,15 +230,15 @@ func (b *SimulatedBackend) CallContract(ctx context.Context, call tomochain.Call
 		return nil, err
 	}
 	res, err := b.callContract(ctx, call, b.blockchain.CurrentBlock(), state)
-        if err != nil {
-                return nil, err
-        }
+	if err != nil {
+		return nil, err
+	}
 
-        if len(res.Revert()) > 0 {
-                return nil, newRevertError(res)
-        }
+	if len(res.Revert()) > 0 {
+		return nil, newRevertError(res)
+	}
 
-        return res.Return(), res.Err
+	return res.Return(), res.Err
 }
 
 // FIXME: please use copyState for this function
@@ -288,11 +284,11 @@ func (b *SimulatedBackend) PendingCallContract(ctx context.Context, call tomocha
 	if err != nil {
 		return nil, err
 	}
-        if len(res.Revert()) > 0 {
-                return nil, newRevertError(res)
-        }
+	if len(res.Revert()) > 0 {
+		return nil, newRevertError(res)
+	}
 
-        return res.Return(), res.Err
+	return res.Return(), res.Err
 }
 
 // PendingNonceAt implements PendingStateReader.PendingNonceAt, retrieving
@@ -334,14 +330,13 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call tomochain.CallM
 		call.Gas = gas
 
 		snapshot := b.pendingState.Snapshot()
-		_, _, failed, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
-		fmt.Println("EstimateGas", err, failed)
+		res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
 		b.pendingState.RevertToSnapshot(snapshot)
 
 		if err != nil {
-                        if err == core.ErrIntrinsicGas {
-                                return true, nil, nil // Special case, raise gas limit
-                        }
+			if err == core.ErrIntrinsicGas {
+				return true, nil, nil // Special case, raise gas limit
+			}
 			return true, nil, err
 		}
 		return res.Failed(), res, nil
@@ -349,37 +344,37 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call tomochain.CallM
 	// Execute the binary search and hone in on an executable gas limit
 	for lo+1 < hi {
 		mid := (hi + lo) / 2
-                failed, _, err := executable(mid)
-                // If the error is not nil(consensus error), it means the provided message
- 		// call or transaction will never be accepted no matter how much gas it is
- 		// assigned. Return the error directly, don't struggle any more
-                if err != nil {
-                        return 0, err
-                }
-                if failed {
-                        lo = mid
+		failed, _, err := executable(mid)
+		// If the error is not nil(consensus error), it means the provided message
+		// call or transaction will never be accepted no matter how much gas it is
+		// assigned. Return the error directly, don't struggle any more
+		if err != nil {
+			return 0, err
+		}
+		if failed {
+			lo = mid
 		} else {
 			hi = mid
 		}
 	}
 	// Reject the transaction as invalid if it still fails at the highest allowance
 	if hi == cap {
-                failed, result, err := executable(hi)
-                if err != nil {
-                        return 0, err
-                } 
-                if failed {
-                        if result != nil && result.Err != vm.ErrOutOfGas {
-                                
-                                if len(result.Revert()) > 0 {
-                                        return 0, newRevertError(result)
-                                }
-                                return 0, result.Err
-                        }
+		failed, result, err := executable(hi)
+		if err != nil {
+			return 0, err
+		}
+		if failed {
+			if result != nil && result.Err != vm.ErrOutOfGas {
 
-                        // Otherwise, the specified gas cap is too low 
-                        return 0, fmt.Errorf("gas required exceeds allowance (%d)", cap)
-                }
+				if len(result.Revert()) > 0 {
+					return 0, newRevertError(result)
+				}
+				return 0, result.Err
+			}
+
+			// Otherwise, the specified gas cap is too low
+			return 0, fmt.Errorf("gas required exceeds allowance (%d)", cap)
+		}
 	}
 	return hi, nil
 }
